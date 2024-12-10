@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from typing import Any, NewType, Tuple
 import random
+import math
 
 # The actions will be a list of floats specifying the new weights of the portfolio
 ActType = NewType("ActType", list[float])
@@ -16,12 +17,19 @@ def reward_function(
         today_close: np.ndarray,
         time: int,
         num_risky_assets: int,
-        prev_positions: np.ndarray
+        prev_positions: np.ndarray,
+        curr_positions: np.ndarray,
+        transaction_percentage: float,
         ) -> float:
     u_t = np.ones(num_risky_assets + 1)
     u_t[1:] = today_close / yesterday_close
 
     momemtum_weights = (u_t * prev_positions)/(u_t.dot(prev_positions))
+    transaction_cost = today_close.dot(np.abs(momemtum_weights[1:] - curr_positions[1:])) * transaction_percentage
+    
+    reward = math.log((u_t * transaction_cost).dot(prev_positions) - transaction_cost)
+
+    return reward
 
 
 class TradingEnv(gym.Env):
