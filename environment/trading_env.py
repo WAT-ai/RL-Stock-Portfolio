@@ -139,16 +139,35 @@ class TradingEnv(gym.Env):
 
     def _update_positions(self, new_positions):
         """
+        Reallocate capital based off new positions.
         1. p_(t-1) = self._positions
-        2. p_t' = (today_close * p_(t-1)) / (today_close.dot(p_(t-1))) (L1 norm of today_close * self._positions)
+        2. p_t' = [ p_(t-1)[0], (today_close * p_(t-1)[1:]) / (today_close.dot(p_(t-1)[1:])) ]
         3. p_t = new_positions
-        4. transaction_cost = today_close.dot(abs(p_t' - p_t)) * t_cost_percentage
-        5. capital = today_close.dot(p_t) - transaction_cost
+        4. transaction_cost = today_close.dot(abs(p_t'[1:] - p_t[1:])) * t_cost_percentage
+        5. cash_capital = capital - today's money in market
+        6. capital = cash_capital + today_close.dot(p_t) - transaction_cost
+
+        Weights and positions are interchangeably used terms.
+        1. self._positions represents the positions going into today
+        2. at today's end of day, we readjust the portfolio weights to account for market movements
+        3.
         """
+
+        # WARNING: THESE CALCULATIONS ARE WRONG
 
         yesterday_close, today_close = self.get_relevant_close_prices()
         old_positions = self._positions
-        market_adjusted_positions = today_close * old_positions
+
+        gross_returns = np.ones(self._num_risky_assets + 1)
+        gross_returns[1:] = today_close / yesterday_close
+
+        market_adjusted_positions = (old_positions * gross_returns) / old_positions.dot(gross_returns)
+        net_tcost = self._tcost * today_close.dot(abs(market_adjusted_positions[1:] - new_positions[1:]))
+
+        money_in_market = today_close.dot(new_positions[1:])
+        cash_capital = self._capital - money_in_market
+        self._capital = cash_capital + money_in_market - net_tcost
+        self._positions = new_positions
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
