@@ -2,13 +2,27 @@ from collections.abc import Callable
 import gymnasium as gym
 import pandas as pd
 import numpy as np
-from typing import Any, NewType
+from typing import Any, NewType, Tuple
+import random
 
 # The actions will be a list of floats specifying the new weights of the portfolio
 ActType = NewType("ActType", list[float])
 
 # TODO: change this if a more specific ObsType is needed
 ObsType = pd.DataFrame
+
+def reward_function(
+        yesterday_close: np.ndarray,
+        today_close: np.ndarray,
+        time: int,
+        num_risky_assets: int,
+        prev_positions: np.ndarray
+        ) -> float:
+    u_t = np.ones(num_risky_assets + 1)
+    u_t[1:] = today_close / yesterday_close
+
+    momemtum_weights = (u_t * prev_positions)/(u_t.dot(prev_positions))
+
 
 class TradingEnv(gym.Env):
     """
@@ -45,9 +59,10 @@ class TradingEnv(gym.Env):
         ohclv_data: pd.DataFrame,
         num_risky_assets: int,
         window_len: int,
-        capital: float,
+        initial_capital: float,
         transaction_cost: float,
         reward_function: Callable,
+        batch_len: int,
         index_to_id: list[str],
     ) -> None:
         """
@@ -67,13 +82,20 @@ class TradingEnv(gym.Env):
         self._positions = np.zeros(num_risky_assets + 1)  # +1 for cash
         self._positions[0] = 1
         self._window_len = window_len
-        self._original_capital = capital
-        self._capital = capital
+        self._initial_capital = initial_capital
+        self._capital = initial_capital
         self._tcost = transaction_cost
         self._reward_function = reward_function
         self._index_to_id = index_to_id
+        self._batch_len = batch_len
 
-        self._cur_end_time = window_len - 1
+        self._data_len = self._ohclv_data[self.COL_TIME].max()
+
+        # initially starts as the "start_time"
+        self._cur_end_time = random.randint(self._window_len - 1, self._data_len - self._batch_len + 1)
+
+        # using the "start_time" to get the episode_end_timeself._episode_end_time = self._cur_end_time + self._batch_len
+
         super().__init__()
 
     def _get_observation(self) -> ObsType:
@@ -109,36 +131,24 @@ class TradingEnv(gym.Env):
         observation = self._get_observation()
         self._cur_end_time += 1
 
-        terminated = self._cur_end_time > self._ohclv_data[self.COL_TIME].max()
+        terminated = self._cur_end_time > self._episode_end_time
         truncated = self._capital <= 0
 
         info = {}
         return observation, reward, terminated, truncated, info
 
-    def _get_capital(self, positions):
+    def _update_positions(self, new_positions):
         """
-        Calculates the current capital based on positions and market returns.
-
-        Args:
-            positions (np.ndarray): Current portfolio allocation.
-
-        Returns:
-            float: Updated capital after applying returns and transaction costs.
+        1. p_(t-1) = self._positions
+        2. p_t' = (today_close * p_(t-1)) / (today_close.dot(p_(t-1))) (L1 norm of today_close * self._positions)
+        3. p_t = new_positions
+        4. transaction_cost = today_close.dot(abs(p_t' - p_t)) * t_cost_percentage
+        5. capital = today_close.dot(p_t) - transaction_cost
         """
-        close_column = self.COL_ADJ_CLOSE
-        if self.COL_ADJ_CLOSE not in self._ohclv_data.columns:
-            close_column = self.COL_CLOSE
 
-        if self._cur_end_time == 0:
-            return self._capital
-
-        yesterday_close = self._ohclv_data[(self._ohclv_data[self.COL_TIME] == self._cur_end_time - 1)][close_column].to_numpy()
-        today_close = self._ohclv_data[(self._ohclv_data[self.COL_TIME] == self._cur_end_time)][close_column].to_numpy()
-        returns = np.zeros(self._num_risky_assets + 1)
-        returns[1:] = (today_close - yesterday_close) / yesterday_close
-
-        capital = (self._capital * (1 + returns) * positions * (1 - self._tcost)).sum()
-        return capital
+        yesterday_close, today_close = self.get_relevant_close_prices()
+        old_positions = self._positions
+        market_adjusted_positions = today_close * old_positions
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -153,13 +163,23 @@ class TradingEnv(gym.Env):
         Returns:
             tuple: Initial observation and additional info.
         """
-        self._cur_end_time = 0
+        self._cur_end_time = random.randint(self._window_len - 1, self._data_len - self._batch_len + 1)
+        self._episode_end_time = self._cur_end_time = self._batch_len
         self._capital = self._original_capital
         self._positions = [0] * self._num_risky_assets
         self._positions[0] = 1  # First index represents cash value
 
         return self._get_observation(), {}
 
+    def get_relevant_close_prices(self) -> Tuple[np.ndarray, np.ndarray]:
+        close_column = self.COL_ADJ_CLOSE
+        if self.COL_ADJ_CLOSE not in self._ohclv_data.columns:
+            close_column = self.COL_CLOSE
+
+        yesterday_close = self._ohclv_data[(self._ohclv_data[self.COL_TIME] == self._cur_end_time - 1)][close_column].to_numpy()
+        today_close = self._ohclv_data[(self._ohclv_data[self.COL_TIME] == self._cur_end_time)][close_column].to_numpy()
+
+        return yesterday_close, today_close
 
 if __name__ == "__main__":
     import yfinance as yf
@@ -180,7 +200,7 @@ if __name__ == "__main__":
     flattened_data["Time"] = pd.factorize(flattened_data["Date"])[0]
 
     my_env = TradingEnv(
-        flattened_data, 3, 5, 1000, 0, lambda: -999, ["MSFT", "AAPL", "GOOG"]
+        flattened_data, 3, 5, 1000, 0.03, lambda: -999, ["MSFT", "AAPL", "GOOG"]
     )
 
     while True:
