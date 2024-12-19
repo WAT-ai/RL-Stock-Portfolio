@@ -161,7 +161,7 @@ class TradingEnv(gym.Env):
 
     def _get_market_adjusted_positions(self) -> np.array:
         rel_prices = self._get_relative_close_prices()
-        return positions * rel_prices / positions.dot(rel_prices)
+        return self._positions * rel_prices / self._positions.dot(rel_prices)
 
     def _update_positions(self, new_positions: np.array):
         """
