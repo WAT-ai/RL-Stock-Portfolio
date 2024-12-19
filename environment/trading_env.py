@@ -3,6 +3,8 @@ import gymnasium as gym
 import pandas as pd
 import numpy as np
 from typing import Any, NewType, Tuple
+
+# TODO: implement seeded rng
 import random
 
 # The actions will be a list of floats specifying the new weights of the portfolio
@@ -11,17 +13,18 @@ ActType = NewType("ActType", list[float])
 # TODO: change this if a more specific ObsType is needed
 ObsType = pd.DataFrame
 
+
 def reward_function(
-        yesterday_close: np.ndarray,
-        today_close: np.ndarray,
-        time: int,
-        num_risky_assets: int,
-        prev_positions: np.ndarray
-        ) -> float:
+    yesterday_close: np.ndarray,
+    today_close: np.ndarray,
+    time: int,
+    num_risky_assets: int,
+    prev_positions: np.ndarray,
+) -> float:
     u_t = np.ones(num_risky_assets + 1)
     u_t[1:] = today_close / yesterday_close
 
-    momemtum_weights = (u_t * prev_positions)/(u_t.dot(prev_positions))
+    momemtum_weights = (u_t * prev_positions) / (u_t.dot(prev_positions))
 
 
 class TradingEnv(gym.Env):
@@ -45,6 +48,7 @@ class TradingEnv(gym.Env):
         _get_capital: Calculates the current capital based on positions and market changes.
         reset: Resets the environment to its initial state.
     """
+
     COL_ID = "Id"
     COL_OPEN = "Open"
     COL_CLOSE = "Close"
@@ -92,7 +96,9 @@ class TradingEnv(gym.Env):
         self._data_len = self._ohclv_data[self.COL_TIME].max()
 
         # initially starts as the "start_time"
-        self._cur_end_time = random.randint(self._window_len - 1, self._data_len - self._batch_len + 1)
+        self._cur_end_time = random.randint(
+            self._window_len - 1, self._data_len - self._batch_len + 1
+        )
 
         # using the "start_time" to get the episode_end_timeself._episode_end_time = self._cur_end_time + self._batch_len
 
@@ -106,7 +112,10 @@ class TradingEnv(gym.Env):
             ObsType: A subset of the OHCLV data representing the current window.
         """
         observation = self._ohclv_data[
-            (self._cur_end_time - self._window_len + 1 <= self._ohclv_data[self.COL_TIME])
+            (
+                self._cur_end_time - self._window_len + 1
+                <= self._ohclv_data[self.COL_TIME]
+            )
             & (self._ohclv_data[self.COL_TIME] <= self._cur_end_time)
         ]
         return observation
@@ -137,18 +146,48 @@ class TradingEnv(gym.Env):
         info = {}
         return observation, reward, terminated, truncated, info
 
-    def _update_positions(self, new_positions):
+    def _get_relative_close_prices(self):
         """
-        1. p_(t-1) = self._positions
-        2. p_t' = (today_close * p_(t-1)) / (today_close.dot(p_(t-1))) (L1 norm of today_close * self._positions)
-        3. p_t = new_positions
-        4. transaction_cost = today_close.dot(abs(p_t' - p_t)) * t_cost_percentage
-        5. capital = today_close.dot(p_t) - transaction_cost
+        If an asset changes price from $100 to $120, this would be a 1.2 relative price change.
+        First element is the relative change in cash, which is generally 1.
+        """
+        yesterday_close, today_close = self.get_relevant_close_prices()
+        rel = today_close / yesterday_close
+
+        CASH_CHANGE = 0
+        rel = np.append([1 + CASH_CHANGE], rel)
+
+        return rel
+
+    def _get_market_adjusted_positions(self) -> np.array:
+        rel_prices = self._get_relative_close_prices()
+        return self._positions * rel_prices / self._positions.dot(rel_prices)
+
+    def _update_positions(self, new_positions: np.array):
+        """
+        Transaction remainder factor.
         """
 
-        yesterday_close, today_close = self.get_relevant_close_prices()
-        old_positions = self._positions
-        market_adjusted_positions = today_close * old_positions
+        adj_positions = self._get_market_adjusted_positions()
+
+        def f(mu):
+            a = 1 / (1 - self._tcost * new_positions[0])
+            b = (
+                1
+                - self._tcost * adj_positions[0]
+                - (2 * self._tcost - self._tcost**2)
+                * np.maximum(adj_positions - mu * new_positions, 0)[1:].sum()
+            )
+            return a * b
+
+        EPS = 1e-6
+        mu = self._tcost * (adj_positions - new_positions)[1:].abs().sum()
+        next_mu = f(mu)
+        while abs(mu - next_mu) > EPS:
+            mu, next_mu = next_mu, f(next_mu)
+
+        self._capital = mu * self._capital
+        self._positions = new_positions
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -163,7 +202,9 @@ class TradingEnv(gym.Env):
         Returns:
             tuple: Initial observation and additional info.
         """
-        self._cur_end_time = random.randint(self._window_len - 1, self._data_len - self._batch_len + 1)
+        self._cur_end_time = random.randint(
+            self._window_len - 1, self._data_len - self._batch_len + 1
+        )
         self._episode_end_time = self._cur_end_time = self._batch_len
         self._capital = self._original_capital
         self._positions = [0] * self._num_risky_assets
@@ -176,10 +217,15 @@ class TradingEnv(gym.Env):
         if self.COL_ADJ_CLOSE not in self._ohclv_data.columns:
             close_column = self.COL_CLOSE
 
-        yesterday_close = self._ohclv_data[(self._ohclv_data[self.COL_TIME] == self._cur_end_time - 1)][close_column].to_numpy()
-        today_close = self._ohclv_data[(self._ohclv_data[self.COL_TIME] == self._cur_end_time)][close_column].to_numpy()
+        yesterday_close = self._ohclv_data[
+            (self._ohclv_data[self.COL_TIME] == self._cur_end_time - 1)
+        ][close_column].to_numpy()
+        today_close = self._ohclv_data[
+            (self._ohclv_data[self.COL_TIME] == self._cur_end_time)
+        ][close_column].to_numpy()
 
         return yesterday_close, today_close
+
 
 if __name__ == "__main__":
     import yfinance as yf
