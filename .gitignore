@@ -1,2 +1,4 @@
 rlstock
 .venv
+a.egg-info/
+__pycache__/
