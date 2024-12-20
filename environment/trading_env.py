@@ -84,6 +84,19 @@ class TradingEnv(gym.Env):
         """
         Initializes the trading environment.
 
+        The ohclv dataframe must contain a timeseries column for the following features:
+        - Date, Id, Open, High, Low, Close, Volume,
+        and optionally an AdjClose column.
+
+        An example dataframe looks like:
+                 Date     Id        Open        High         Low       Close    Volume
+        0  2024-11-20   AAPL  228.059998  229.929993  225.889999  229.000000  35169600
+        1  2024-11-20   GOOG  178.627344  178.907025  175.131310  177.129044  15729800
+        2  2024-11-20   MSFT  416.037221  416.456396  409.759778  414.659973  19191700
+        3  2024-11-21   AAPL  228.880005  230.160004  225.710007  228.520004  42108300
+        4  2024-11-21   GOOG  175.256171  175.381029  165.122663  169.048218  38839400
+        ...
+
         Args:
             ohclv_data (pd.DataFrame): Input OHCLV data.
             num_risky_assets (int): Number of risky assets (e.g., stocks).
@@ -97,6 +110,7 @@ class TradingEnv(gym.Env):
         random.seed(seed)
 
         self._ohclv_data = ohclv_data
+        self._format_ohclv_data()
         self._num_risky_assets = num_risky_assets
         self._positions = np.zeros(num_risky_assets + 1)  # +1 for cash
         self._positions[0] = 1
@@ -118,6 +132,13 @@ class TradingEnv(gym.Env):
         # using the "start_time" to get the episode_end_timeself._episode_end_time = self._cur_end_time + self._batch_len
 
         super().__init__()
+
+    def _format_ohclv_data(self):
+        for col in ("Date", "Id", "Open", "High", "Low", "Close", "Volume"):
+            assert col in self._ohclv_data
+
+        self._ohclv_data["Time"] = pd.factorize(self._ohclv_data["Date"])[0]
+        self._ohclv_data.drop(columns=["Date"], inplace=True)
 
     def _get_observation(self) -> ObsType:
         """
