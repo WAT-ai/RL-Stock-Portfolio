@@ -79,6 +79,7 @@ class TradingEnv(gym.Env):
         reward_function: Callable,
         batch_len: int,
         index_to_id: list[str],
+        seed: int,
     ) -> None:
         """
         Initializes the trading environment.
@@ -92,6 +93,9 @@ class TradingEnv(gym.Env):
             reward_function (Callable): Function to compute the reward.
             index_to_id (list[str]): List mapping indices to asset identifiers.
         """
+        np.random.seed(seed)
+        random.seed(seed)
+
         self._ohclv_data = ohclv_data
         self._num_risky_assets = num_risky_assets
         self._positions = np.zeros(num_risky_assets + 1)  # +1 for cash
@@ -213,6 +217,9 @@ class TradingEnv(gym.Env):
         Returns:
             tuple: Initial observation and additional info.
         """
+        np.random.seed(seed)
+        random.seed(seed)
+
         self._cur_end_time = random.randint(
             self._window_len - 1, self._data_len - self._batch_len + 1
         )
