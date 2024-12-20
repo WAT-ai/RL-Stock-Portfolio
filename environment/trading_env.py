@@ -3,6 +3,7 @@ import gymnasium as gym
 import pandas as pd
 import numpy as np
 from typing import Any, NewType, Tuple
+from functools import cache
 
 # TODO: implement seeded rng
 import random
@@ -13,29 +14,6 @@ ActType = NewType("ActType", list[float])
 
 # TODO: change this if a more specific ObsType is needed
 ObsType = pd.DataFrame
-
-
-def reward_function(
-    yesterday_close: np.ndarray,
-    today_close: np.ndarray,
-    time: int,
-    num_risky_assets: int,
-    prev_positions: np.ndarray,
-    curr_positions: np.ndarray,
-    transaction_percentage: float,
-) -> float:
-    u_t = np.ones(num_risky_assets + 1)
-    u_t[1:] = today_close / yesterday_close
-
-    momemtum_weights = (u_t * prev_positions) / (u_t.dot(prev_positions))
-    transaction_cost = (
-        today_close.dot(np.abs(momemtum_weights[1:] - curr_positions[1:]))
-        * transaction_percentage
-    )
-
-    reward = math.log((u_t * transaction_cost).dot(prev_positions) - transaction_cost)
-
-    return reward
 
 
 class TradingEnv(gym.Env):
@@ -116,7 +94,7 @@ class TradingEnv(gym.Env):
         self._positions[0] = 1
         self._window_len = window_len
         self._initial_capital = initial_capital
-        self._capital = initial_capital
+        self._portfolio_value = initial_capital
         self._tcost = transaction_cost
         self._reward_function = reward_function
         self._index_to_id = index_to_id
@@ -141,6 +119,7 @@ class TradingEnv(gym.Env):
 
         self._ohclv_data["Time"] = pd.factorize(self._ohclv_data["Date"])[0]
         self._ohclv_data.drop(columns=["Date"], inplace=True)
+        
 
     def _get_observation(self) -> ObsType:
         """
@@ -157,75 +136,7 @@ class TradingEnv(gym.Env):
             & (self._ohclv_data[self.COL_TIME] <= self._cur_end_time)
         ]
         return observation
-
-    def step(
-        self, action: list[float]
-    ) -> tuple[ObsType, float, bool, bool, dict[str, Any]]:
-        """
-        Executes a step in the environment by taking the specified action.
-
-        Args:
-            action (list[float]): Portfolio weights to allocate to each asset.
-
-        Returns:
-            tuple: Observation, reward, termination flag, truncation flag, and additional info.
-        """
-        assert len(action) == len(self._positions)
-
-        reward = self._reward_function()
-        self._update_positions()
-        self._capital = self._get_capital(self._positions)
-        observation = self._get_observation()
-        self._cur_end_time += 1
-
-        terminated = self._cur_end_time > self._episode_end_time
-        truncated = self._capital <= 0
-
-        info = {}
-        return observation, reward, terminated, truncated, info
-
-    def _get_relative_close_prices(self):
-        """
-        If an asset changes price from $100 to $120, this would be a 1.2 relative price change.
-        First element is the relative change in cash, which is generally 1.
-        """
-        yesterday_close, today_close = self.get_relevant_close_prices()
-        rel = today_close / yesterday_close
-
-        CASH_CHANGE = 0
-        rel = np.append([1 + CASH_CHANGE], rel)
-
-        return rel
-
-    def _get_market_adjusted_positions(self) -> np.array:
-        rel_prices = self._get_relative_close_prices()
-        return self._positions * rel_prices / self._positions.dot(rel_prices)
-
-    def _update_positions(self, new_positions: np.array):
-        """
-        Transaction remainder factor.
-        """
-
-        adj_positions = self._get_market_adjusted_positions()
-
-        def f(mu):
-            a = 1 / (1 - self._tcost * new_positions[0])
-            b = (
-                1
-                - self._tcost * adj_positions[0]
-                - (2 * self._tcost - self._tcost**2)
-                * np.maximum(adj_positions - mu * new_positions, 0)[1:].sum()
-            )
-            return a * b
-
-        EPS = 1e-6
-        mu = self._tcost * (adj_positions - new_positions)[1:].abs().sum()
-        next_mu = f(mu)
-        while abs(mu - next_mu) > EPS:
-            mu, next_mu = next_mu, f(next_mu)
-
-        self._capital = mu * self._capital
-        self._positions = new_positions
+    
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -253,7 +164,43 @@ class TradingEnv(gym.Env):
 
         return self._get_observation(), {}
 
+
+    def step(
+        self, action: list[float]
+    ) -> tuple[ObsType, float, bool, bool, dict[str, Any]]:
+        """
+        Executes a step in the environment by taking the specified action.
+
+        Args:
+            action (list[float]): Portfolio weights to allocate to each asset.
+
+        Returns:
+            tuple: Observation, reward, termination flag, truncation flag, and additional info.
+        """
+        assert len(action) == len(self._positions)
+        
+        # reward = self._reward_function(self._positions, action, self._trf)
+        reward = 0
+        
+        ## Update positions and portfolio value
+        self._positions = action
+        self.update_portfolio_value(action)
+
+        ## Get observations of upcoming day to input to the model
+        observation = self._get_observation()
+
+        self._cur_end_time += 1
+
+        terminated = self._cur_end_time > self._episode_end_time
+        truncated = self._capital <= 0
+
+        info = {}
+        return observation, reward, terminated, truncated, info
+
+    
+
     def get_relevant_close_prices(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Returns the close prices for the current and previous days."""
         close_column = self.COL_ADJ_CLOSE
         if self.COL_ADJ_CLOSE not in self._ohclv_data.columns:
             close_column = self.COL_CLOSE
@@ -266,6 +213,78 @@ class TradingEnv(gym.Env):
         ][close_column].to_numpy()
 
         return yesterday_close, today_close
+
+
+    def _get_relative_close_prices(self):
+        """
+        If an asset changes price from $100 to $120, this would be a 1.2 relative price change.
+        First element is the relative change in cash, which is generally 1.
+        y_t = p_t / p_{t-1}
+        """
+        yesterday_close, today_close = self.get_relevant_close_prices()
+        rel = today_close / yesterday_close
+
+        CASH_CHANGE = 0
+        rel = np.append([1 + CASH_CHANGE], rel)
+
+        return rel
+
+
+    def _get_market_adjusted_positions(self) -> np.array:
+        """Gets the updated position weights after close due to market movements during the day."""
+        rel_prices = self._get_relative_close_prices()
+        return self._positions * rel_prices / self._positions.dot(rel_prices)
+
+
+    def _trf(self, action: np.array) -> float:
+        """
+        Calculates the transaction remainder factor (TRF) for the given action.
+        """
+        adj_positions = self._get_market_adjusted_positions()
+
+        def f(mu):
+            a = 1 / (1 - self._tcost * action[0])
+            b = (
+                1
+                - self._tcost * adj_positions[0]
+                - (2 * self._tcost - self._tcost**2)
+                * np.maximum(adj_positions - mu * action, 0)[1:].sum()
+            )
+            return a * b
+
+        EPS = 1e-6
+        mu = self._tcost * (adj_positions - action)[1:].abs().sum()
+        next_mu = f(mu)
+        while abs(mu - next_mu) > EPS:
+            mu, next_mu = next_mu, f(next_mu)
+
+        return next_mu
+    
+
+    def _update_portfolio_value(self, action: np.array) -> float:
+        """
+        Updates the portfolio value based on the action of the agent using the transaction remainder factor.
+        """
+
+        mu = self._trf(action)
+        self._portfolio_value = self._portfolio_value * mu * (self._get_relative_close_prices().dot(self._positions))
+    
+
+    
+
+# def reward_function(env: TradingEnv) -> float:
+#     u_t = np.ones(num_risky_assets + 1)
+#     u_t[1:] = today_close / yesterday_close
+
+#     momemtum_weights = (u_t * prev_positions) / (u_t.dot(prev_positions))
+#     transaction_cost = (
+#         today_close.dot(np.abs(momemtum_weights[1:] - curr_positions[1:]))
+#         * transaction_percentage
+#     )
+
+#     reward = math.log((u_t * transaction_cost).dot(prev_positions) - transaction_cost)
+
+#     return reward
 
 
 if __name__ == "__main__":
