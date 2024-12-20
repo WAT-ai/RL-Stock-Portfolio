@@ -135,7 +135,9 @@ class TradingEnv(gym.Env):
 
     def _format_ohclv_data(self):
         for col in ("Date", "Id", "Open", "High", "Low", "Close", "Volume"):
-            assert col in self._ohclv_data
+            assert (
+                col in self._ohclv_data
+            ), f"Column={col} not found in columns of ohclv data"
 
         self._ohclv_data["Time"] = pd.factorize(self._ohclv_data["Date"])[0]
         self._ohclv_data.drop(columns=["Date"], inplace=True)
@@ -171,7 +173,7 @@ class TradingEnv(gym.Env):
         assert len(action) == len(self._positions)
 
         reward = self._reward_function()
-        self._positions = action
+        self._update_positions()
         self._capital = self._get_capital(self._positions)
         observation = self._get_observation()
         self._cur_end_time += 1
