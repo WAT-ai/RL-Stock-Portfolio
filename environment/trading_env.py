@@ -107,7 +107,7 @@ class TradingEnv(gym.Env):
         self._cur_end_time = random.randint(
             self._window_len - 1, self._data_len - self._batch_len + 1
         )
-        self._episode_end_time = self._cur_end_time = self._batch_len
+        self._episode_end_time = self._cur_end_time + self._batch_len
 
         # using the "start_time" to get the episode_end_timeself._episode_end_time = self._cur_end_time + self._batch_len
 
