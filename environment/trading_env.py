@@ -55,7 +55,7 @@ class TradingEnv(gym.Env):
         initial_capital: float,
         transaction_cost: float,
         reward_function: Callable,
-        batch_len: int,
+        episode_len: int,
         index_to_id: list[str],
         seed: int,
     ) -> None:
@@ -98,18 +98,18 @@ class TradingEnv(gym.Env):
         self._tcost = transaction_cost
         self._reward_function = reward_function
         self._index_to_id = index_to_id
-        self._batch_len = batch_len
+        self._episode_len = episode_len
         self.reward = 0
 
         self._data_len = self._ohclv_data[self.COL_TIME].max()
 
         # initially starts as the "start_time"
         self._cur_end_time = random.randint(
-            self._window_len - 1, self._data_len - self._batch_len + 1
+            self._window_len - 1, self._data_len - self._episode_len + 1
         )
-        self._episode_end_time = self._cur_end_time + self._batch_len
+        self._episode_end_time = self._cur_end_time + self._episode_len
 
-        # using the "start_time" to get the episode_end_timeself._episode_end_time = self._cur_end_time + self._batch_len
+        # using the "start_time" to get the episode_end_timeself._episode_end_time = self._cur_end_time + self._episode_len
 
         super().__init__()
 
@@ -155,9 +155,9 @@ class TradingEnv(gym.Env):
         random.seed(seed)
 
         self._cur_end_time = random.randint(
-            self._window_len - 1, self._data_len - self._batch_len + 1
+            self._window_len - 1, self._data_len - self._episode_len + 1
         )
-        self._episode_end_time = self._cur_end_time = self._batch_len
+        self._episode_end_time = self._cur_end_time + self._episode_len
         self._capital = self._original_capital
         self._positions = np.zeros(self._num_risky_assets)
         self._positions[0] = 1  # First index represents cash value
@@ -193,7 +193,7 @@ class TradingEnv(gym.Env):
         self._cur_end_time += 1
 
         terminated = self._cur_end_time > self._episode_end_time
-        truncated = self._capital <= 0
+        truncated = self._portfolio_value <= 0
 
         info = {}
         return observation, reward, terminated, truncated, info
@@ -203,6 +203,8 @@ class TradingEnv(gym.Env):
         close_column = self.COL_ADJ_CLOSE
         if self.COL_ADJ_CLOSE not in self._ohclv_data.columns:
             close_column = self.COL_CLOSE
+
+        ## Note: paper implementation states yesterday_close == today_open, not true in practice, need to resolve this
 
         yesterday_close = self._ohclv_data[
             (self._ohclv_data[self.COL_TIME] == self._cur_end_time - 1)
@@ -268,7 +270,13 @@ class TradingEnv(gym.Env):
             * (self._get_relative_close_prices().dot(self._positions))
         )
 
-    def reward_function(self):
+    def reward_function(
+        self,
+        mu,
+        close_prices,
+    ):
+
+        mu = self._trf()
 
         close_prices = self._get_relative_close_prices()
         reward = np.log(close_prices.dot(self._positions))
