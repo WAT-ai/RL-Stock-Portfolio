@@ -99,6 +99,7 @@ class TradingEnv(gym.Env):
         self._reward_function = reward_function
         self._index_to_id = index_to_id
         self._batch_len = batch_len
+        self.reward = 0
 
         self._data_len = self._ohclv_data[self.COL_TIME].max()
 
@@ -106,6 +107,7 @@ class TradingEnv(gym.Env):
         self._cur_end_time = random.randint(
             self._window_len - 1, self._data_len - self._batch_len + 1
         )
+        self._episode_end_time = self._cur_end_time = self._batch_len
 
         # using the "start_time" to get the episode_end_timeself._episode_end_time = self._cur_end_time + self._batch_len
 
@@ -119,7 +121,6 @@ class TradingEnv(gym.Env):
 
         self._ohclv_data["Time"] = pd.factorize(self._ohclv_data["Date"])[0]
         self._ohclv_data.drop(columns=["Date"], inplace=True)
-        
 
     def _get_observation(self) -> ObsType:
         """
@@ -136,7 +137,6 @@ class TradingEnv(gym.Env):
             & (self._ohclv_data[self.COL_TIME] <= self._cur_end_time)
         ]
         return observation
-    
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -159,11 +159,10 @@ class TradingEnv(gym.Env):
         )
         self._episode_end_time = self._cur_end_time = self._batch_len
         self._capital = self._original_capital
-        self._positions = [0] * self._num_risky_assets
+        self._positions = np.zeros(self._num_risky_assets)
         self._positions[0] = 1  # First index represents cash value
 
         return self._get_observation(), {}
-
 
     def step(
         self, action: list[float]
@@ -178,13 +177,15 @@ class TradingEnv(gym.Env):
             tuple: Observation, reward, termination flag, truncation flag, and additional info.
         """
         assert len(action) == len(self._positions)
-        
+
+        action = np.array(action)
+
         # reward = self._reward_function(self._positions, action, self._trf)
         reward = 0
-        
+
         ## Update positions and portfolio value
         self._positions = action
-        self.update_portfolio_value(action)
+        self._update_portfolio_value(action)
 
         ## Get observations of upcoming day to input to the model
         observation = self._get_observation()
@@ -196,8 +197,6 @@ class TradingEnv(gym.Env):
 
         info = {}
         return observation, reward, terminated, truncated, info
-
-    
 
     def get_relevant_close_prices(self) -> Tuple[np.ndarray, np.ndarray]:
         """Returns the close prices for the current and previous days."""
@@ -214,7 +213,6 @@ class TradingEnv(gym.Env):
 
         return yesterday_close, today_close
 
-
     def _get_relative_close_prices(self):
         """
         If an asset changes price from $100 to $120, this would be a 1.2 relative price change.
@@ -229,12 +227,10 @@ class TradingEnv(gym.Env):
 
         return rel
 
-
     def _get_market_adjusted_positions(self) -> np.array:
         """Gets the updated position weights after close due to market movements during the day."""
         rel_prices = self._get_relative_close_prices()
         return self._positions * rel_prices / self._positions.dot(rel_prices)
-
 
     def _trf(self, action: np.array) -> float:
         """
@@ -253,13 +249,12 @@ class TradingEnv(gym.Env):
             return a * b
 
         EPS = 1e-6
-        mu = self._tcost * (adj_positions - action)[1:].abs().sum()
+        mu = self._tcost * np.abs((adj_positions - action)[1:]).sum()
         next_mu = f(mu)
         while abs(mu - next_mu) > EPS:
             mu, next_mu = next_mu, f(next_mu)
 
         return next_mu
-    
 
     def _update_portfolio_value(self, action: np.array) -> float:
         """
@@ -267,10 +262,18 @@ class TradingEnv(gym.Env):
         """
 
         mu = self._trf(action)
-        self._portfolio_value = self._portfolio_value * mu * (self._get_relative_close_prices().dot(self._positions))
-    
+        self._portfolio_value = (
+            self._portfolio_value
+            * mu
+            * (self._get_relative_close_prices().dot(self._positions))
+        )
 
-    
+    def reward_function(self):
+
+        close_prices = self._get_relative_close_prices()
+        reward = np.log(close_prices.dot(self._positions))
+        return reward
+
 
 # def reward_function(env: TradingEnv) -> float:
 #     u_t = np.ones(num_risky_assets + 1)
@@ -287,30 +290,30 @@ class TradingEnv(gym.Env):
 #     return reward
 
 
-if __name__ == "__main__":
-    import yfinance as yf
+# if __name__ == "__main__":
+#     import yfinance as yf
 
-    def get_random_positions(num_assets) -> np.array:
-        positions = np.random.random(num_assets + 1)
-        positions /= positions.sum()
-        return positions
+#     def get_random_positions(num_assets) -> np.array:
+#         positions = np.random.random(num_assets + 1)
+#         positions /= positions.sum()
+#         return positions
 
-    tickers = yf.Tickers("MSFT AAPL GOOG")
-    data = tickers.download()
-    data = data[["Open", "High", "Low", "Close", "Volume"]]
-    flattened_data = (
-        data.stack(level=1)  # Move tickers to rows
-        .reset_index()  # Reset index to convert to a flat DataFrame
-        .rename(columns={"level_1": "Ticker"})  # Rename the column for tickers
-    )
-    flattened_data["Time"] = pd.factorize(flattened_data["Date"])[0]
+#     tickers = yf.Tickers("MSFT AAPL GOOG")
+#     data = tickers.download()
+#     data = data[["Open", "High", "Low", "Close", "Volume"]]
+#     flattened_data = (
+#         data.stack(level=1)  # Move tickers to rows
+#         .reset_index()  # Reset index to convert to a flat DataFrame
+#         .rename(columns={"level_1": "Ticker"})  # Rename the column for tickers
+#     )
+#     flattened_data["Time"] = pd.factorize(flattened_data["Date"])[0]
 
-    my_env = TradingEnv(
-        flattened_data, 3, 5, 1000, 0.03, lambda: -999, ["MSFT", "AAPL", "GOOG"]
-    )
+#     my_env = TradingEnv(
+#         flattened_data, 3, 5, 1000, 0.03, lambda: -999, ["MSFT", "AAPL", "GOOG"]
+#     )
 
-    while True:
-        positions = list(get_random_positions(3))
-        _, _, terminated, truncated, _ = my_env.step(positions)
-        if terminated:
-            break
+#     while True:
+#         positions = list(get_random_positions(3))
+#         _, _, terminated, truncated, _ = my_env.step(positions)
+#         if terminated:
+#             break
