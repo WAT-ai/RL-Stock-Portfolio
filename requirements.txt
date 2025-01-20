@@ -1,4 +1,4 @@
--e git+https://github.com/WAT-ai/RL-Stock-Portfolio.git@6dd02668879ee9d33dabb6aa1a120f541dcd374c#egg=a
+-e git+https://github.com/WAT-ai/RL-Stock-Portfolio.git@7a178337a3459983259b479b3f9df5a69cfb1551#egg=a
 beautifulsoup4==4.12.3
 certifi==2024.8.30
 charset-normalizer==3.4.0
@@ -15,9 +15,10 @@ pandas==2.2.3
 peewee==3.17.8
 platformdirs==4.3.6
 python-dateutil==2.9.0.post0
+python-dotenv==1.0.1
 pytz==2024.2
 requests==2.32.3
--e git+https://github.com/WAT-ai/RL-Stock-Portfolio.git@6dd02668879ee9d33dabb6aa1a120f541dcd374c#egg=rl_stock_portfolio
+-e git+https://github.com/WAT-ai/RL-Stock-Portfolio.git@7a178337a3459983259b479b3f9df5a69cfb1551#egg=rl_stock_portfolio
 setuptools==75.6.0
 six==1.16.0
 soupsieve==2.6

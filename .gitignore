@@ -3,3 +3,4 @@ rlstock
 a.egg-info/
 __pycache__/
 *.egg*/
+.env
