@@ -1,6 +1,5 @@
 import unittest
-from environment import TradingEnv
-import yfinance as yf
+from environment import TradingEnv, load_data
 
 
 class TradingEnvTests(unittest.TestCase):
@@ -17,40 +16,26 @@ class TradingEnvTests(unittest.TestCase):
     - ensure capital does not fall below min threshold
     """
 
-    def test_no_adj_close(self):
-        tickers = yf.Tickers("AAPL GOOGL MSFT")
-        # data = tickers.download(end="2020-01-01")
-        data = yf.download(
-            tickers="AAPL GOOGL MSFT",
-            start="2019-01-01",
-            end="2020-01-01",
-        )
-        data = data[["Open", "High", "Low", "Close", "Volume"]]
-        flattened_data = (
-            data.stack(level=1)  # Move tickers to rows
-            .reset_index()  # Reset index to convert to a flat DataFrame
-            .rename(columns={"level_1": "Ticker"})  # Rename the column for tickers
-        )
-        flattened_data.rename(columns={"Ticker": "Id"}, inplace=True)
+    def test1(self):
+        # a demonstration of usage if anything
 
-        my_env = TradingEnv(
-            ohclv_data=flattened_data,
-            num_risky_assets=3,
-            window_len=4,
+        symbols = ["AAPL", "VOD"]
+        ohclv = load_data(
+            symbols,
+            start_date="2020-10-01",
+            end_date="2020-11-05",
+        )
+        t_env = TradingEnv(
+            ohclv,
+            num_risky_assets=len(symbols),
+            window_len=5,
             initial_capital=1000,
             transaction_cost=0,
-            reward_function=lambda: 1,
-            episode_len=5,
-            index_to_id=["AAPL", "GOOGL", "MSFT"],
+            reward_function=lambda x: 1,
+            episode_len=10,
+            index_to_id={x: i for i, x in enumerate(symbols)},
             seed=123,
         )
-
-        obs, reward, terminated, truncated, info = my_env.step([0, 0, 0, 1])
-
-        print(my_env._portfolio_value)
-
-    # def assert_reward():
-    #     return type(reward)
 
 
 if __name__ == "__main__":
