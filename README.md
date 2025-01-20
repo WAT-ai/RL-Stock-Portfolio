@@ -1,3 +1,6 @@
 # RL Stock Portfolio Optimization
 
-```pip install -r requirements.txt```
+```bash
+pip install -r requirements.txt
+echo TWELVE_DATA_API_KEY > .env
+```
