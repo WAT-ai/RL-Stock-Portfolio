@@ -2,7 +2,7 @@ from dotenv import dotenv_values
 from twelvedata import TDClient
 import pandas_market_calendars as mcal
 import pandas as pd
-from datetime import date, timedelta
+from datetime import timedelta
 
 env_config = dotenv_values(".env")
 
@@ -47,3 +47,13 @@ def load_data(symbols: list[str], start_date, end_date):
     ts.reset_index(drop=True, inplace=True)
 
     return ts
+
+
+def test():
+    data = load_data(
+        ["AAPL", "MSFT", "TSLA", "VOD"], start_date="2020-01-01", end_date="2020-02-01"
+    )
+    print(data)
+
+
+test()
