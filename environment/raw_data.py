@@ -49,11 +49,11 @@ def load_data(symbols: list[str], start_date, end_date):
     return ts
 
 
-def test():
-    data = load_data(
-        ["AAPL", "MSFT", "TSLA", "VOD"], start_date="2020-01-01", end_date="2020-02-01"
-    )
-    print(data)
+# def test():
+#     data = load_data(
+#         ["AAPL", "MSFT", "TSLA", "VOD"], start_date="2020-01-01", end_date="2020-02-01"
+#     )
+#     print(data)
 
 
-test()
+# test()

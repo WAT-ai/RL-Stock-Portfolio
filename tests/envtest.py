@@ -15,8 +15,9 @@ class TradingEnvTests(unittest.TestCase):
     - reset must reset values to defaults (0, None, etc. depending on the value)
     - ensure capital does not fall below min threshold
     """
+    environment = None
 
-    def test1(self):
+    def test_initialization(self):
         # a demonstration of usage if anything
 
         symbols = ["AAPL", "VOD"]
@@ -25,7 +26,7 @@ class TradingEnvTests(unittest.TestCase):
             start_date="2020-10-01",
             end_date="2020-11-05",
         )
-        t_env = TradingEnv(
+        TradingEnvTests.environment = TradingEnv(
             ohclv,
             num_risky_assets=len(symbols),
             window_len=5,
@@ -36,6 +37,13 @@ class TradingEnvTests(unittest.TestCase):
             index_to_id={x: i for i, x in enumerate(symbols)},
             seed=123,
         )
+        self.assertIsInstance(TradingEnvTests.environment, TradingEnv)
+
+    def test_public_methods(self):
+        assert TradingEnvTests.environment.reset()
+        assert TradingEnvTests.environment.get_relevant_close_prices()
+        assert TradingEnvTests.environment.reward_function(0.1, [0.1]*50)
+
 
 
 if __name__ == "__main__":

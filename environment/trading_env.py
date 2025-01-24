@@ -158,7 +158,7 @@ class TradingEnv(gym.Env):
             self._window_len - 1, self._data_len - self._episode_len + 1
         )
         self._episode_end_time = self._cur_end_time + self._episode_len
-        self._capital = self._original_capital
+        self._capital = self._initial_capital
         self._positions = np.zeros(self._num_risky_assets)
         self._positions[0] = 1  # First index represents cash value
 
@@ -276,8 +276,10 @@ class TradingEnv(gym.Env):
         close_prices,
     ):
 
-        mu = self._trf()
+        mu = self._trf() # ERROR: _trf requires an action
 
         close_prices = self._get_relative_close_prices()
         reward = np.log(close_prices.dot(self._positions))
         return reward
+
+
