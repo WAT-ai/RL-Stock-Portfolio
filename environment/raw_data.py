@@ -52,6 +52,13 @@ def _load_data_limited(symbols: tuple[str], start_date, end_date):
 
 
 def load_data(symbols: list[str], start_date, end_date, _batch_size=8):
+    """
+    Get adjusted OHCLV data for symbols in open days across [start_date, end_date].
+
+    Uses len(symbols) // _batch_size API tokens per symbol per call.
+
+    *Do not* pass in a different value for _batch_size unless you have a good reason to.
+    """
     _RATE_LIMIT = 60  # seconds between calls
 
     ret = pd.DataFrame()
