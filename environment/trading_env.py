@@ -7,7 +7,6 @@ from functools import cache
 
 # TODO: implement seeded rng
 import random
-import math
 
 # The actions will be a list of floats specifying the new weights of the portfolio
 ActType = NewType("ActType", list[float])
@@ -30,12 +29,19 @@ class TradingEnv(gym.Env):
         COL_VOLUME (str): Column name for trading volume.
         COL_TIME (str): Column name for time index.
 
-    Methods:
+    Public Methods:
         __init__: Initializes the environment with configuration parameters.
-        _get_observation: Retrieves the current window of OHCLV data.
         step: Takes an action, computes the reward, and advances the environment.
-        _get_capital: Calculates the current capital based on positions and market changes.
         reset: Resets the environment to its initial state.
+        get_relevant_close_prices: Retrieves the close prices of the assets relevant to the current state.
+        reward_function: Computes the reward based on the current state and action taken.
+
+    Private Methods:
+        _get_observation: Retrieves the current window of OHCLV data.
+        _get_capital: Calculates the current capital based on positions and market changes.
+        _compute_reward: Computes the reward based on the current state and action taken.
+        _update_state: Updates the environment state based on the action taken.
+        _check_terminal_state: Checks if the environment has reached a terminal state.
     """
 
     COL_ID = "Id"

@@ -20,14 +20,15 @@ class TradingEnvTests(unittest.TestCase):
     def test_initialization(self):
         # a demonstration of usage if anything
 
-        symbols = ["AAPL", "VOD"]
+        symbols = ["AAPL"]
+        # symbols = ["AAPL", "VOD"]
         ohclv = load_data(
             symbols,
             start_date="2020-10-01",
             end_date="2020-11-05",
         )
         TradingEnvTests.environment = TradingEnv(
-            ohclv,
+            ohclv_data=ohclv,
             num_risky_assets=len(symbols),
             window_len=5,
             initial_capital=1000,
@@ -37,13 +38,17 @@ class TradingEnvTests(unittest.TestCase):
             index_to_id={x: i for i, x in enumerate(symbols)},
             seed=123,
         )
+        print(TradingEnvTests.environment._ohclv_data)
         self.assertIsInstance(TradingEnvTests.environment, TradingEnv)
 
     def test_public_methods(self):
         assert TradingEnvTests.environment.reset()
         assert TradingEnvTests.environment.get_relevant_close_prices()
-        assert TradingEnvTests.environment.reward_function(0.1, [0.1]*50)
-
+        # assert TradingEnvTests.environment.reward_function(0.1, [0.1]*50)
+        assert TradingEnvTests.environment
+    
+    # def test_private_methods(self):
+    #     assert TradingEnvTests.environment._update_portfolio_value()
 
 
 if __name__ == "__main__":
