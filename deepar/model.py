@@ -17,7 +17,7 @@ class DeepARModel(nn.Module):
         Initialize the DeepAR model.
 
         Args:
-            input_size (int, optional): Number of input features. Defaults to 6.
+            input_size (int, optional): Number of input features. Defaults to 5.
             hidden_size (int, optional): Size of hidden layers. Defaults to 64.
             num_layers (int, optional): Number of LSTM layers. Defaults to 2.
             dropout (float, optional): Dropout rate. Defaults to 0.1.
@@ -68,7 +68,7 @@ class DeepARModel(nn.Module):
         # LSTM forward pass
         lstm_out, hidden = self.lstm(x, hidden)
         
-        # Pass through new FC sub-network before mu and sigma
+        # Pass through new fully-connected sub-network before mu and sigma
         fc_out = self.post_lstm_fc(lstm_out)
         mu = self.mu_layer(fc_out)
         sigma = torch.exp(self.sigma_layer(fc_out))  # Ensure positive variance
@@ -76,6 +76,16 @@ class DeepARModel(nn.Module):
         return mu, sigma, hidden
     
     def init_hidden(self, batch_size):
+        """
+        Initialize the hidden state for the LSTM.
+
+        Args:
+            batch_size (int): Size of the batch.
+
+        Returns:
+            tuple: Initialized hidden state (h_0, c_0) where both are of shape 
+                   (num_layers, batch_size, hidden_size).
+        """
         weight = next(self.parameters())
         return (weight.new_zeros(self.num_layers, batch_size, self.hidden_size),
                 weight.new_zeros(self.num_layers, batch_size, self.hidden_size))
