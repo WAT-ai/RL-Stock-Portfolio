@@ -44,8 +44,8 @@ class FeedForwardNN(nn.Module):
         activation2 = F.relu(self.layer2(activation1))
         output = self.layer3(activation2)
 
-        if self.is_actor:
-            # Apply softmax for actor network to ensure weights sum to 1
-            output = F.softmax(output, dim=-1)
+        # if self.is_actor:
+        #     # Apply softmax for actor network to ensure weights sum to 1
+        #     output = F.softmax(output, dim=-1)
 
         return output

@@ -96,7 +96,7 @@ def main(args):
 	# ArgumentParser because it's too annoying to type them every time at command line. Instead, you can change them here.
 	# To see a list of hyperparameters, look in ppo.py at function _init_hyperparameters
 	hyperparameters = {
-				'timesteps_per_batch': 2048, 
+				'timesteps_per_batch': 2016, 
 				'max_timesteps_per_episode': 252, 
 				'gamma': 0.99, 
 				'n_updates_per_iteration': 10,
@@ -111,7 +111,7 @@ def main(args):
 	# observation and action spaces.
 	env = PortfolioEnv(
         tickers=['AAPL', 'MSFT', 'GOOGL','AMZN','TSLA'],  # Example tickers
-        start_date='2022-01-01',
+        start_date='2012-01-01',
         end_date='2023-01-01',
         initial_balance=100000,
     )

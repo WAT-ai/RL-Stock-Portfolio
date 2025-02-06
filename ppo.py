@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.distributions import MultivariateNormal
+import pandas as pd
 
 class PPO:
 	"""
@@ -69,6 +70,8 @@ class PPO:
 			'batch_lens': [],       # episodic lengths in batch
 			'batch_rews': [],       # episodic returns in batch
 			'actor_losses': [],     # losses of actor network in current iteration
+			'all_ep_final_vals': [],
+			'all_ep_total_rews': [],
 		}
 
 	def learn(self, total_timesteps):
@@ -87,7 +90,7 @@ class PPO:
 		i_so_far = 0 # Iterations ran so far
 		while t_so_far < total_timesteps:                                                                       # ALG STEP 2
 			# Autobots, roll out (just kidding, we're collecting our batch simulations here)
-			batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout()                     # ALG STEP 3
+			batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_final_vals = self.rollout()                     # ALG STEP 3
 
 			# Calculate how many timesteps we collected this batch
 			t_so_far += np.sum(batch_lens)
@@ -98,6 +101,14 @@ class PPO:
 			# Logging timesteps so far and iterations so far
 			self.logger['t_so_far'] = t_so_far
 			self.logger['i_so_far'] = i_so_far
+			
+			# --- Store final portfolio values & total reward of each episode in the batch ---
+			self.logger['all_ep_final_vals'].extend(batch_final_vals)
+			
+			# For total reward, sum each episode's rewards:
+			for ep_rewards in self.logger['batch_rews']:
+				self.logger['all_ep_total_rews'].append(sum(ep_rewards))
+        	# -----------------------
 
 			# Calculate advantage at k-th iteration
 			V, _ = self.evaluate(batch_obs, batch_acts)
@@ -154,6 +165,10 @@ class PPO:
 			if i_so_far % self.save_freq == 0:
 				torch.save(self.actor.state_dict(), './ppo_actor.pth')
 				torch.save(self.critic.state_dict(), './ppo_critic.pth')
+			
+		# After finishing all timesteps, save the csv of final portfolio 
+		self._save_episode_data_to_csv("training_log.csv")
+
 
 	def rollout(self):
 		"""
@@ -178,6 +193,8 @@ class PPO:
 		batch_rews = []
 		batch_rtgs = []
 		batch_lens = []
+
+		batch_final_vals = []
 
 		# Episodic data. Keeps track of rewards per episode, will get cleared
 		# upon each new episode
@@ -208,7 +225,7 @@ class PPO:
 				# Calculate action and make a step in the env. 
 				# Note that rew is short for reward.
 				action, log_prob = self.get_action(obs)
-				obs, rew, terminated, truncated, _ = self.env.step(action)
+				obs, rew, terminated, truncated, info = self.env.step(action)
 
 				# Don't really care about the difference between terminated or truncated in this, so just combine them
 				done = terminated | truncated
@@ -219,11 +236,16 @@ class PPO:
 				batch_log_probs.append(log_prob)
 			
 				if done:
+					final_val = info['portfolio_value']
+					batch_final_vals.append(final_val)
 					break
 
 				# If the environment tells us the episode is terminated, break
 				if done:
 					break
+
+			final_val = info['portfolio_value']
+			batch_final_vals.append(final_val)
 
 			# Track episodic lengths and rewards
 			batch_lens.append(ep_t + 1)
@@ -245,7 +267,7 @@ class PPO:
 		self.logger['batch_rews'] = batch_rews
 		self.logger['batch_lens'] = batch_lens
 
-		return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens
+		return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_final_vals
 
 	def compute_rtgs(self, batch_rews):
 		"""
@@ -334,6 +356,10 @@ class PPO:
 		# Calculate the log probabilities of batch actions using most recent actor network.
 		# This segment of code is similar to that in get_action()
 		mean = self.actor(batch_obs)
+		print("Mean before MultivariateNormal -> Evaluate:", mean)
+		if torch.isnan(mean).any():
+			raise ValueError("NaN detected in the mean tensor.")
+		
 		print("Covariance matrix before creating MultivariateNormal:")
 		print(self.cov_mat)
 		if torch.isnan(self.cov_mat).any():
@@ -433,3 +459,18 @@ class PPO:
 		self.logger['batch_lens'] = []
 		self.logger['batch_rews'] = []
 		self.logger['actor_losses'] = []
+
+	def _save_episode_data_to_csv(self, filename="training_log.csv"):
+		
+		# Number of episodes (one entry per episode)
+		ep_count = len(self.logger['all_ep_final_vals'])
+
+		# Build a DataFrame from lists
+		df = pd.DataFrame({
+			"episode": range(1, ep_count + 1),
+			"final_portfolio_value": self.logger['all_ep_final_vals'],
+		})
+
+		# Write to CSV without an index column
+		df.to_csv(filename, index=False)
+		print(f"Saved training log to {filename}")

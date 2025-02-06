@@ -84,7 +84,9 @@ class PortfolioEnv(gym.Env):
         self.balance = self.initial_balance
         self.weights = np.array([1.0 / len(self.tickers)] * len(self.tickers))
         self.portfolio_value = self.initial_balance
-        self.current_step = 0
+        # Choose a random start index so each episode doesn't always begin at day 0
+        # We subtract 1 to ensure there's at least one more step after we start.
+        self.current_step = np.random.randint(0, len(self.dates) - 253)
         print("Environment reset:")
         print(f"Initial balance: {self.balance}")
         print(f"Initial portfolio value: {self.portfolio_value}")
@@ -133,8 +135,9 @@ class PortfolioEnv(gym.Env):
 
         # Calculate reward (log of risk-adjusted return)
         risk = np.std(returns) if np.std(returns) > 0 else 1e-8
-        reward = np.log(portfolio_return / risk + 1)
-        print(f"Reward: {reward}")
+        val = portfolio_return / risk + 1
+        val = max(val, 1e-8)  # or some positive epsilon
+        reward = np.log(val)
 
         # Update step
         self.current_step += 1
