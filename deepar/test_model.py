@@ -6,6 +6,7 @@ from model import DeepARModel, StockDataset, nll_loss
 from datetime import datetime, timedelta
 import torch.optim as optim
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 
 def fetch_stock_data(symbols: list, start_date: datetime, end_date: datetime, debug: bool = False) -> dict:
     """
@@ -250,6 +251,38 @@ def test_model(model: DeepARModel, symbols: list, window_size: int = 7,
 
     return results
 
+def plot_predictions(results: dict):
+    """
+    Plot predicted vs actual prices for each stock.
+
+    Args:
+        results (dict): Dictionary containing prediction results for each symbol
+    """
+    num_symbols = len(results)
+    fig, axes = plt.subplots(num_symbols, 1, figsize=(12, 5*num_symbols))
+    if num_symbols == 1:
+        axes = [axes]
+
+    for idx, (symbol, data) in enumerate(results.items()):
+        predictions = data['predictions'][:-1]  # Exclude the future prediction
+        dates = [p['date'] for p in predictions]
+        predicted_values = [p['predicted'] for p in predictions]
+        actual_values = [p['actual'] for p in predictions]
+
+        ax = axes[idx]
+        ax.plot(dates, predicted_values, 'b-', label='Predicted', linewidth=2)
+        ax.plot(dates, actual_values, 'r-', label='Actual', linewidth=2)
+        
+        ax.set_title(f'{symbol} Stock Price Prediction')
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Price')
+        ax.legend()
+        ax.grid(True)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+
+    plt.tight_layout()
+    plt.show()
+
 if __name__ == "__main__":
     # Modified example usage
     symbols = ['AAPL', 'GOOGL', 'MSFT']
@@ -265,3 +298,6 @@ if __name__ == "__main__":
     
     # Test model on recent data
     results = test_model(model, symbols, window_size=window_size, debug=True)
+    
+    # Plot the results
+    plot_predictions(results)
