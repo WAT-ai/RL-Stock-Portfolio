@@ -90,22 +90,26 @@ class DeepARModel(nn.Module):
         return (weight.new_zeros(self.num_layers, batch_size, self.hidden_size),
                 weight.new_zeros(self.num_layers, batch_size, self.hidden_size))
     
-    def predict(self, x: torch.Tensor) -> torch.Tensor:
+    def predict(self, x: torch.Tensor) -> tuple:
         """
-        Generate prediction for the next day.
+        Generate point prediction for the next day.
 
         Args:
             x (torch.Tensor): Input tensor of shape (batch_size, window_len, input_size)
 
         Returns:
-            torch.Tensor: Prediction tensor of shape (batch_size, 1, 1)
+            tuple: (prediction_mean, prediction_std, hidden_state)
+                - prediction_mean: Mean prediction tensor of shape (batch_size, 1, 1)
+                - prediction_std: Standard deviation tensor (kept for model stability)
+                - hidden_state: Final hidden state tuple
         """
         self.eval()
         with torch.no_grad():
             mu, sigma, hidden = self(x)
-            prediction = mu[:, -1:, :]  # Just take the last prediction
+            prediction_mean = mu[:, -1:, :]  # Use mean as our point prediction
+            prediction_std = sigma[:, -1:, :]  # Keep for model stability
             
-        return prediction
+        return prediction_mean, prediction_std, hidden
 
 def nll_loss(mu: torch.Tensor, sigma: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """
@@ -131,28 +135,48 @@ class StockDataset:
         norm_params (dict): Normalization parameters
     """
     
-    def __init__(self, data: dict, window_len: int):
+    def __init__(self, data: dict, window_len: int, train_split: float = 0.8):
         """
         Initialize the dataset.
 
         Args:
             data (dict): Dictionary with stock symbols as keys and DataFrames as values
             window_len (int): Length of the sliding window
+            train_split (float): Ratio of data to use for training (0.0 to 1.0)
         """
         self.window_len = window_len
         self.stocks = {}
         self.norm_params = {}
+        self.mode = None  # 'train' or 'val'
         
         # Process each stock in the dictionary
         for symbol, df in data.items():
             features = df[['Open', 'High', 'Low', 'Close', 'Volume']].values
-            # Store normalization parameters
-            mean = features.mean(0)
-            std = features.std(0)
+            # Store normalization parameters using only training data
+            split_idx = int(len(features) * train_split)
+            train_features = features[:split_idx]
+            
+            mean = train_features.mean(0)
+            std = train_features.std(0)
             self.norm_params[symbol] = {'mean': mean, 'std': std}
-            # Normalize features
+            
+            # Normalize all features
             features = (features - mean) / std
             self.stocks[symbol] = features
+            
+        self.train_indices = {}
+        self.val_indices = {}
+        for symbol in self.stocks:
+            data_len = len(self.stocks[symbol])
+            split_idx = int(data_len * train_split)
+            # Create indices for training and validation
+            self.train_indices[symbol] = list(range(0, split_idx - window_len))
+            self.val_indices[symbol] = list(range(split_idx - window_len, data_len - window_len))
+    
+    def set_mode(self, mode: str):
+        """Set the dataset mode to either 'train' or 'val'."""
+        assert mode in ['train', 'val'], "Mode must be either 'train' or 'val'"
+        self.mode = mode
     
     def denormalize(self, value: float, symbol: str, feature_idx: int = 3) -> float:
         """
@@ -176,30 +200,41 @@ class StockDataset:
         Get a data sample.
 
         Args:
-            idx (int): Index of the stock
+            idx (int): Index of the sliding window within the stock data
 
         Returns:
             tuple: (x, y)
                 - x: Input sequence tensor
                 - y: Target sequence tensor
         """
-        stock_id = list(self.stocks.keys())[idx]
-        data = self.stocks[stock_id]
+        if self.mode is None:
+            raise ValueError("Dataset mode not set. Call set_mode('train') or set_mode('val')")
         
-        # Random starting point
-        start_idx = np.random.randint(0, len(data) - self.window_len)
-        sequence = data[start_idx:start_idx + self.window_len]
+        # Find which stock and index this belongs to
+        for symbol in self.stocks:
+            indices = self.train_indices[symbol] if self.mode == 'train' else self.val_indices[symbol]
+            if idx < len(indices):
+                data_idx = indices[idx]
+                sequence = self.stocks[symbol][data_idx:data_idx + self.window_len]
+                x = torch.FloatTensor(sequence[:-1])
+                y = torch.FloatTensor(sequence[1:])
+                return x, y
+            idx -= len(indices)
         
-        x = torch.FloatTensor(sequence[:-1])  # All features for input
-        y = torch.FloatTensor(sequence[1:])   # All features for target
-        
-        return x, y
+        raise IndexError("Index out of range")
     
     def __len__(self) -> int:
         """
-        Get the number of stocks in the dataset.
+        Get the number of sliding windows in the dataset.
 
         Returns:
-            int: Number of stocks
+            int: Number of sliding windows
         """
-        return len(self.stocks)
+        if self.mode is None:
+            raise ValueError("Dataset mode not set. Call set_mode('train') or set_mode('val')")
+        
+        total_len = 0
+        for symbol in self.stocks:
+            indices = self.train_indices[symbol] if self.mode == 'train' else self.val_indices[symbol]
+            total_len += len(indices)
+        return total_len

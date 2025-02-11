@@ -46,9 +46,9 @@ def fetch_stock_data(symbols: list, start_date: datetime, end_date: datetime, de
     
     return stock_data
 
-def train_deepar(stock_data: dict, window_len: int = 10, epochs: int = 10, 
-                lr: float = 1e-4, val_split: float = 0.2, 
-                batch_size: int = 32, debug: bool = False) -> DeepARModel:
+def train_deepar(stock_data: dict, window_len: int = 7, epochs: int = 20, 
+                lr: float = 1e-4, train_split: float = 0.8, 
+                batch_size: int = 10, debug: bool = False) -> DeepARModel:
     """
     Train the DeepAR model using stock data.
 
@@ -57,33 +57,36 @@ def train_deepar(stock_data: dict, window_len: int = 10, epochs: int = 10,
         window_len (int, optional): Length of the sliding window. Defaults to 10.
         epochs (int, optional): Number of training epochs. Defaults to 10.
         lr (float, optional): Learning rate. Defaults to 1e-4.
-        val_split (float, optional): Validation split ratio. Defaults to 0.2.
-        batch_size (int, optional): Training batch size. Defaults to 32.
+        train_split (float, optional): Training split ratio. Defaults to 0.8.
+        batch_size (int, optional): Training batch size. Defaults to 7.
         debug (bool, optional): Enable debug printing. Defaults to False.
 
     Returns:
         DeepARModel: Trained model instance
     """
-    # Split data into train and validation
-    split_index = int((1 - val_split) * len(stock_data))
-    train_symbols = list(stock_data.keys())[:split_index]
-    val_symbols = list(stock_data.keys())[split_index:]
+    # Create dataset with time-based splitting
+    dataset = StockDataset(stock_data, window_len, train_split=train_split)
     
-    train_dataset = StockDataset({k: stock_data[k] for k in train_symbols}, window_len)
-    val_dataset = StockDataset({k: stock_data[k] for k in val_symbols}, window_len)
+    # Create data loaders for train and validation
+    dataset.set_mode('train')
+    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    dataset.set_mode('val')
+    val_loader = DataLoader(dataset, batch_size=batch_size)
     
     model = DeepARModel()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
+    best_val_loss = float('inf')
+    best_model_state = None
+    
     model.train()
     for epoch in range(epochs):
+        # Training phase
+        dataset.set_mode('train')
         total_loss = 0.0
         num_batches = 0
         
-        # Training loop with batches
         for batch_x, batch_y in train_loader:
             optimizer.zero_grad()
             mu, sigma, _ = model(batch_x)
@@ -93,22 +96,32 @@ def train_deepar(stock_data: dict, window_len: int = 10, epochs: int = 10,
             total_loss += loss.item()
             num_batches += 1
         
-        # Validation loop with batches
+        # Validation phase
+        dataset.set_mode('val')
         val_loss = 0.0
         num_val_batches = 0
+        
         with torch.no_grad():
             model.eval()
             for batch_x, batch_y in val_loader:
                 mu, sigma, _ = model(batch_x)
                 val_loss += nll_loss(mu[:, :-1, 0], sigma[:, :-1, 0], batch_y[:, 1:, 3]).mean().item()
                 num_val_batches += 1
+            
+            avg_val_loss = val_loss / num_val_batches
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                best_model_state = model.state_dict().copy()
+            
             model.train()
         
         if debug:
             print(f"Epoch {epoch+1}/{epochs}, "
                   f"Train NLL: {total_loss/num_batches:.4f}, "
-                  f"Val NLL: {val_loss/num_val_batches:.4f}")
+                  f"Val NLL: {avg_val_loss:.4f}")
     
+    # Load best model state
+    model.load_state_dict(best_model_state)
     return model
 
 def calculate_metrics(predictions: np.ndarray, actuals: np.ndarray) -> dict:
@@ -139,61 +152,116 @@ def calculate_metrics(predictions: np.ndarray, actuals: np.ndarray) -> dict:
         'MAPE': mape
     }
 
-def test_model(model: DeepARModel, symbols: list, window_len: int = 10, 
-               debug: bool = False) -> dict:
+def make_prediction_windows(data: pd.DataFrame, window_size: int) -> list:
     """
-    Test the model and generate next-day predictions.
+    Create sliding windows for prediction.
+    """
+    windows = []
+    total_rows = len(data)
+    
+    # Create windows up to the second-to-last day (last day is for final prediction)
+    for i in range(total_rows - window_size):
+        window_data = data.iloc[i:i+window_size]
+        if i + window_size < total_rows:
+            target_date = data.iloc[i+window_size]['Date']
+            target_value = float(data.iloc[i+window_size]['Close'])  # Convert to float
+            windows.append((window_data, target_date, target_value))
+    
+    # Add final window for tomorrow's prediction
+    final_window = data.iloc[-window_size:]
+    tomorrow = pd.Timestamp.now() + pd.Timedelta(days=1)
+    windows.append((final_window, tomorrow, None))
+    
+    return windows
+
+def test_model(model: DeepARModel, symbols: list, window_size: int = 7, 
+               test_days: int = 50, debug: bool = False) -> dict:
+    """
+    Test the model using sliding windows of real data.
 
     Args:
         model (DeepARModel): Trained DeepAR model instance
         symbols (list): List of stock symbols to test
-        window_len (int, optional): Length of the sliding window. Defaults to 10.
-        debug (bool, optional): Enable debug printing. Defaults to False.
+        window_size (int): Size of sliding window
+        test_days (int): Number of past days to test on
+        debug (bool): Enable debug printing
 
     Returns:
-        dict: Dictionary containing results for each symbol:
-            - 'Last_Known_Price': Last available price
-            - 'Last_Known_Date': Date of last available price
-            - 'Next_Day_Prediction': Tuple of (date, predicted_price)
+        dict: Dictionary containing results for each symbol
     """
-    # Fetch recent data for predictions
+    # Fetch recent data
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=window_len*2)  # Get enough historical data for the window
+    start_date = end_date - timedelta(days=test_days)
     current_data = fetch_stock_data(symbols, start_date, end_date)
     
-    future_predictions = {}
-    next_day = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
+    results = {}
+    model.eval()
     
     for symbol, data in current_data.items():
         if debug:
-            print(f"\nGenerating prediction for {symbol}")
+            print(f"\nGenerating predictions for {symbol}")
         
-        dataset = StockDataset({symbol: data}, window_len)
-        x, _ = dataset[0]
-        x = x.unsqueeze(0)
+        # Create dataset for normalization
+        dataset = StockDataset({symbol: data}, window_size)
         
-        # Generate next day prediction
-        prediction = model.predict(x)
+        # Get prediction windows
+        prediction_windows = make_prediction_windows(data, window_size)
+        predictions = []
         
-        # Denormalize prediction
-        normalized_pred = prediction[0, 0, 0].item()
-        future_pred = dataset.denormalize(normalized_pred, symbol)
+        for window_data, target_date, target_value in prediction_windows:
+            features = window_data[['Open', 'High', 'Low', 'Close', 'Volume']].values
+            normalized_features = (features - dataset.norm_params[symbol]['mean']) / dataset.norm_params[symbol]['std']
+            x = torch.FloatTensor(normalized_features).unsqueeze(0)
+            
+            # Make prediction - only use the mean value
+            with torch.no_grad():
+                pred_mean, _, _ = model.predict(x)
+            
+            # Denormalize prediction
+            predicted_price = float(dataset.denormalize(pred_mean[0, 0, 0].item(), symbol))
+            
+            # Store results - simplified to just prediction and actual
+            prediction_entry = {
+                'date': target_date,
+                'predicted': predicted_price,
+                'actual': target_value
+            }
+            predictions.append(prediction_entry)
+            
+            if debug:
+                actual_str = f"Actual: {target_value:.2f}" if target_value is not None else "Actual: N/A"
+                print(f"Date: {target_date}, Predicted: {predicted_price:.2f}, {actual_str}")
+
+        # Calculate metrics excluding the last prediction
+        valid_predictions = predictions[:-1]
+        actual_values = [p['actual'] for p in valid_predictions]
+        predicted_values = [p['predicted'] for p in valid_predictions]
+        metrics = calculate_metrics(predicted_values, actual_values)
         
-        future_predictions[symbol] = {
-            'Last_Known_Price': float(data['Close'].iloc[-1].item()),
-            'Last_Known_Date': end_date.strftime('%Y-%m-%d'),
-            'Next_Day_Prediction': (next_day, future_pred)
+        results[symbol] = {
+            'predictions': predictions,
+            'metrics': metrics
         }
         
-        # Print results (regardless of debug flag)
-        print(f"\nResults for {symbol}:")
-        print(f"Last Known Price: ${future_predictions[symbol]['Last_Known_Price']:.2f}")
-        print(f"Next Day Prediction ({next_day}): ${future_pred:.2f}")
-        
-    return future_predictions
+        if debug:
+            print(f"\nMetrics for {symbol}:")
+            print(f"RMSE: {metrics['RMSE']:.2f}")
+            print(f"MAPE: {metrics['MAPE']:.2f}%")
+
+    return results
 
 if __name__ == "__main__":
-    symbols = ['AAPL', 'GOOGL', 'SHOP', "MSFT", "NVDA", "AMZN"]
-    stock_data = fetch_stock_data(symbols, datetime.now() - timedelta(days=365), datetime.now())
-    model = train_deepar(stock_data, debug=True)
-    results = test_model(model, symbols, debug=True)
+    # Modified example usage
+    symbols = ['AAPL', 'GOOGL', 'MSFT']
+    window_size = 7
+    
+    # Training data (one year ending 31 days ago to avoid overlap with test data)
+    train_end = datetime.now() - timedelta(days=50)
+    train_start = train_end - timedelta(days=150)
+    train_data = fetch_stock_data(symbols, train_start, train_end)
+    
+    # Train model
+    model = train_deepar(train_data, window_len=window_size, debug=True)
+    
+    # Test model on recent data
+    results = test_model(model, symbols, window_size=window_size, debug=True)
