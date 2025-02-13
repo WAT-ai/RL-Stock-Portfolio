@@ -5,4 +5,4 @@ from trading_env import TradingEnv
 
 class Trainer:
     def __init__(self, model):
-        ...
+        self.model_to_train = model
