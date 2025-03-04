@@ -197,7 +197,7 @@ class StockDataset:
         
     def __getitem__(self, idx: int) -> tuple:
         """
-        Get a data sample.
+        Get a data sample without overlap between input and target.
 
         Args:
             idx (int): Index of the sliding window within the stock data
@@ -205,7 +205,7 @@ class StockDataset:
         Returns:
             tuple: (x, y)
                 - x: Input sequence tensor
-                - y: Target sequence tensor
+                - y: Target sequence tensor (next time step)
         """
         if self.mode is None:
             raise ValueError("Dataset mode not set. Call set_mode('train') or set_mode('val')")
@@ -215,9 +215,10 @@ class StockDataset:
             indices = self.train_indices[symbol] if self.mode == 'train' else self.val_indices[symbol]
             if idx < len(indices):
                 data_idx = indices[idx]
-                sequence = self.stocks[symbol][data_idx:data_idx + self.window_len]
-                x = torch.FloatTensor(sequence[:-1])
-                y = torch.FloatTensor(sequence[1:])
+                input_sequence = self.stocks[symbol][data_idx:data_idx + self.window_len - 1]
+                target_value = self.stocks[symbol][data_idx + self.window_len - 1]
+                x = torch.FloatTensor(input_sequence)
+                y = torch.FloatTensor(target_value).unsqueeze(0)  # Single target value
                 return x, y
             idx -= len(indices)
         

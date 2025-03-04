@@ -91,7 +91,8 @@ def train_deepar(stock_data: dict, window_len: int = 7, epochs: int = 20,
         for batch_x, batch_y in train_loader:
             optimizer.zero_grad()
             mu, sigma, _ = model(batch_x)
-            loss = nll_loss(mu[:, :-1, 0], sigma[:, :-1, 0], batch_y[:, 1:, 3]).mean()
+            # Since y is now a single target value, we need to adjust the loss calculation
+            loss = nll_loss(mu[:, :, 0], sigma[:, :, 0], batch_y[:, :, 3]).mean()
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -106,7 +107,7 @@ def train_deepar(stock_data: dict, window_len: int = 7, epochs: int = 20,
             model.eval()
             for batch_x, batch_y in val_loader:
                 mu, sigma, _ = model(batch_x)
-                val_loss += nll_loss(mu[:, :-1, 0], sigma[:, :-1, 0], batch_y[:, 1:, 3]).mean().item()
+                val_loss += nll_loss(mu[:, :, 0], sigma[:, :, 0], batch_y[:, :, 3]).mean().item()
                 num_val_batches += 1
             
             avg_val_loss = val_loss / num_val_batches
@@ -153,25 +154,29 @@ def calculate_metrics(predictions: np.ndarray, actuals: np.ndarray) -> dict:
         'MAPE': mape
     }
 
-def make_prediction_windows(data: pd.DataFrame, window_size: int) -> list:
+def make_prediction_windows(data: pd.DataFrame, window_size: int, debug: bool = False) -> list:
     """
-    Create sliding windows for prediction.
+    Create sliding windows for prediction with proper input/target separation.
     """
     windows = []
     total_rows = len(data)
     
-    # Create windows up to the second-to-last day (last day is for final prediction)
-    for i in range(total_rows - window_size):
-        window_data = data.iloc[i:i+window_size]
-        if i + window_size < total_rows:
-            target_date = data.iloc[i+window_size]['Date']
-            target_value = float(data.iloc[i+window_size]['Close'])  # Convert to float
-            windows.append((window_data, target_date, target_value))
+    # Create windows where we use window_size-1 days to predict the next day
+    for i in range(total_rows - window_size + 1):
+        # Use window_size-1 for input to match training data structure
+        input_window = data.iloc[i:i+window_size-1]
+        if i + window_size - 1 < total_rows:
+            target_date = data.iloc[i+window_size-1]['Date']
+            target_value = float(data.iloc[i+window_size-1]['Close'])
+            windows.append((input_window, target_date, target_value))
     
     # Add final window for tomorrow's prediction
-    final_window = data.iloc[-window_size:]
-    tomorrow = pd.Timestamp.now() + pd.Timedelta(days=1)
-    windows.append((final_window, tomorrow, None))
+    if len(data) >= window_size - 1:
+        if debug:
+            print("Adding final window for tomorrow's prediction")
+        final_window = data.iloc[-(window_size-1):]
+        tomorrow = pd.Timestamp.now() + pd.Timedelta(days=1)
+        windows.append((final_window, tomorrow, None))
     
     return windows
 
@@ -206,7 +211,7 @@ def test_model(model: DeepARModel, symbols: list, window_size: int = 7,
         dataset = StockDataset({symbol: data}, window_size)
         
         # Get prediction windows
-        prediction_windows = make_prediction_windows(data, window_size)
+        prediction_windows = make_prediction_windows(data, window_size, debug=debug)
         predictions = []
         
         for window_data, target_date, target_value in prediction_windows:
@@ -285,13 +290,14 @@ def plot_predictions(results: dict):
 
 if __name__ == "__main__":
     # Modified example usage
-    symbols = ['AAPL', 'GOOGL', 'MSFT']
+    symbols = ['AAPL', 'GOOGL', 'MSFT', 'SHOP', 'TSLA']
     window_size = 7
     
     # Training data (one year ending 31 days ago to avoid overlap with test data)
     train_end = datetime.now() - timedelta(days=50)
-    train_start = train_end - timedelta(days=150)
+    train_start = train_end - timedelta(days=5000)
     train_data = fetch_stock_data(symbols, train_start, train_end)
+    print(train_data)
     
     # Train model
     model = train_deepar(train_data, window_len=window_size, debug=True)
