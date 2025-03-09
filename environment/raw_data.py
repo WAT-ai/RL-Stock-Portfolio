@@ -29,7 +29,11 @@ def _load_data_limited(symbols: tuple[str], start_date, end_date):
     open_days = nyse_cal.schedule(start_date=start_date, end_date=end_date).index
     ts = (
         td.time_series(
-            symbol=symbols, interval="1day", start_date=start_date, end_date=end_date
+            symbol=symbols,
+            interval="1day",
+            outputsize=None,
+            start_date=start_date,
+            end_date=end_date,
         )
         .as_pandas()
         .reset_index()
