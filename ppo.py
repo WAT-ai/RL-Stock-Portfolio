@@ -6,7 +6,7 @@
 
 import gymnasium as gym
 import time
-from gym.spaces.box import Box
+from gymnasium.spaces import Box
 import numpy as np
 import time
 import torch
