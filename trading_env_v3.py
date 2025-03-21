@@ -7,6 +7,7 @@ import yfinance as yf
 import pandas_ta as ta
 from datetime import timedelta
 from deepar import test_model  # Import DeepAR testing function
+from load_12data import load_data
 
 class PortfolioEnv(gymnasium.Env):
     def __init__(self, tickers, start_date, end_date, initial_balance=100000, window_len=20, deepar_model=None):
@@ -31,8 +32,12 @@ class PortfolioEnv(gymnasium.Env):
         # Total assets include cash plus each stock.
         self.num_assets = self.num_stocks + 1
 
-        self.data = self._load_data(tickers, start_date, end_date)
+        # self.data = self._load_data(tickers, start_date, end_date)
+        self.data = load_data(tickers, start_date, end_date)
+        print(self.data)
+
         self.dates = self.data.index.get_level_values("Date").unique()
+        print(self.dates)
 
         # Portfolio properties.
         self.initial_balance = initial_balance
@@ -113,7 +118,8 @@ class PortfolioEnv(gymnasium.Env):
         date = self.dates[self.current_step]
         raw_data = self.data.loc[(date, slice(None)), :].reset_index().sort_values(["Date", "Ticker"])
         norm_sub_data = raw_data.copy()
-        norm_sub_data[["Open", "High", "Low", "Close"]] /= norm_sub_data["Close"].values[:, None]
+        print("THE DATA IS RIGHT HERE", norm_sub_data[["Open", "High", "Low", "Close"]])
+        norm_sub_data[["Open", "High", "Low", "Close"]] /= norm_sub_data["Close"]
         norm_sub_data["Volume"] /= self.data["Volume"].max()
         norm_sub_data["RSI"] /= self.data["RSI"].max()
         observation = norm_sub_data[["Open", "High", "Low", "Close", "Volume", "RSI"]].to_numpy().flatten()

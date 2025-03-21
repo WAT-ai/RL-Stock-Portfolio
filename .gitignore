@@ -5,3 +5,4 @@ rlstock
 __pycache__/
 *.pyc
 *.pyo
+.github/
