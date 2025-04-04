@@ -58,8 +58,8 @@ def main():
     # Create the Portfolio Trading Environment with DeepAR integration.
     env = PortfolioEnv(
         tickers=['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'],
-        start_date='2024-01-01',
-        end_date='2025-01-01',
+        start_date='2020-01-19',
+        end_date='2020-04-30',
         initial_balance=100000,
         window_len=20,
         deepar_model=deepar_model
@@ -82,6 +82,6 @@ Train to Test Check list:
 1. confirm hyper parameters -> dates and batch/episode sizes
 2. ensure file paths are correct (ppo actor path for training, portfolio values path for testing) -> don't overwrite existing data!
 3. switch environment from selecting random start date (for training) to starting at first date (for testing)
-4. python main2.py --mode test --actor_model="ppo_actor_v10.pth"
+4. python main.py --mode test --actor_model="ppo_actor_v8.pth"
 
 '''
